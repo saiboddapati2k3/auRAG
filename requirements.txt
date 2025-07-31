@@ -1,7 +1,9 @@
-fastapi 
-uvicorn 
-openai 
-pinecone-client 
-langchain 
-pdfminer.six 
+fastapi
+uvicorn
+langchain
+openai
+pypdf
+tiktoken
+pinecone-client
 python-dotenv
+requests

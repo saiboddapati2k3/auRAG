@@ -1,35 +1,37 @@
-import os
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Request, Header
+from processor import load_and_index_document
+from model import query_document
 from pydantic import BaseModel
-from Utils.doc_loader import load_pdf_from_url
-from Utils.rag_pipeline import get_qa_chain
+from typing import List
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
 app = FastAPI()
 
-# Security check
-REQUIRED_TOKEN = "Bearer YOUR_EXPECTED_API_KEY"  # Replace with your expected test token
-
-class QueryPayload(BaseModel):
+class QueryRequest(BaseModel):
     documents: str
-    questions: list[str]
+    questions: List[str]
 
 @app.post("/hackrx/run")
-async def process_hackrx(request: Request, payload: QueryPayload, authorization: str = Header(None)):
-    if authorization != REQUIRED_TOKEN:
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid Bearer Token")
+async def run_query(request: QueryRequest, authorization: str = Header(...)):
+    if not authorization.startswith("Bearer "):
+        return {"status": "error", "message": "Invalid token format"}
 
+    # Step 1: Load and embed document
     try:
-        document_text = load_pdf_from_url(payload.documents)
-        qa_chain = get_qa_chain(document_text)
-
-        results = []
-        for q in payload.questions:
-            answer = qa_chain.run(q)
-            results.append(answer)
-
-        return {"answers": results}
-
+        doc_chunks = load_and_index_document(request.documents)
     except Exception as e:
-        return {"answers": [], "error": str(e)}
+        return {"status": "error", "message": str(e)}
+
+    # Step 2: Process each question
+    results = []
+    for q in request.questions:
+        answer = query_document(q)
+        results.append(answer)
+
+    return {
+        "status": "success",
+        "answers": results
+    }
