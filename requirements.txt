@@ -1,0 +1,7 @@
+fastapi 
+uvicorn 
+openai 
+pinecone-client 
+langchain 
+pdfminer.six 
+python-dotenv
