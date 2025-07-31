@@ -9,3 +9,6 @@ def load_pdf_from_url(pdf_url: str) -> str:
     pdf_data = BytesIO(response.content)
     text = extract_text(pdf_data)
     return text
+
+
+# sai boddapati (in feat1)
