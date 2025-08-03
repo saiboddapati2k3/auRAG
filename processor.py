@@ -4,7 +4,10 @@ from dotenv import load_dotenv
 from pinecone import Pinecone, PodSpec  # ← Updated import
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+# from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings , ChatGoogleGenerativeAI
+
+
 from langchain_pinecone import Pinecone as PineconeVectorStore # ← Updated import
 
 load_dotenv()
@@ -22,12 +25,12 @@ if index_name not in pc.list_indexes().names():
     print(f"Creating index '{index_name}'...")
     pc.create_index(
         name=index_name,
-        dimension=1536,  # Dimension for OpenAI's text-embedding-ada-002
+        dimension=768,  # Dimension for OpenAI's text-embedding-ada-002
         metric="cosine",
         spec=PodSpec(environment=pinecone_env)
     )
 
-embeddings = OpenAIEmbeddings()
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
 # ───────────────────────── Helpers ─────────────────────────
 def download_pdf(url: str, path: str = "temp_doc.pdf"):

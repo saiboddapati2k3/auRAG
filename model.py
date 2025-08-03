@@ -1,13 +1,14 @@
 import os
 from dotenv import load_dotenv
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+# from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings , ChatGoogleGenerativeAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain_pinecone import Pinecone as PineconeVectorStore # ← Updated import
 
 load_dotenv()
 
-llm         = ChatOpenAI(model="gpt-4", temperature=0)
-embedding   = OpenAIEmbeddings()
+llm         = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+embedding   = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 index_name  = os.getenv("PINECONE_INDEX_NAME") or "aurag"
 
 def query_document(query: str):
