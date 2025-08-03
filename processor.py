@@ -1,24 +1,31 @@
 import os
 import requests
 from dotenv import load_dotenv
-import pinecone                                    # ← old SDK
+from pinecone import Pinecone, PodSpec  # ← Updated import
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Pinecone as PineconeVectorStore
+from langchain_pinecone import Pinecone as PineconeVectorStore # ← Updated import
 
 load_dotenv()
 
-# ───────────────────────── Pinecone init ─────────────────────────
-pinecone.init(
-    api_key=os.getenv("PINECONE_API_KEY"),
-    environment=os.getenv("PINECONE_ENV") or "us-east-1"
-)
-index_name = os.getenv("PINECONE_INDEX_NAME") or "aurag"
+# ───────────────────────── Pinecone init (Updated) ─────────────────────────
+# The new client automatically uses PINECONE_API_KEY from .env
+pc = Pinecone()
 
-# create index if needed (1536 dims for OpenAI)
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(index_name, dimension=1536, metric="cosine")
+# Get index name and environment from .env, with fallbacks
+index_name = os.getenv("PINECONE_INDEX_NAME") or "aurag"
+pinecone_env = os.getenv("PINECONE_ENV") or "us-east-1"
+
+# Create index if it doesn't exist (1536 dims for OpenAI)
+if index_name not in pc.list_indexes().names():
+    print(f"Creating index '{index_name}'...")
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  # Dimension for OpenAI's text-embedding-ada-002
+        metric="cosine",
+        spec=PodSpec(environment=pinecone_env)
+    )
 
 embeddings = OpenAIEmbeddings()
 
@@ -45,6 +52,7 @@ def load_and_index_document(doc_url: str):
 
     print(f"✅ {len(chunks)} chunks")
     print("🔗 Uploading to Pinecone...")
+    # This LangChain function works with the new SDK via the langchain-pinecone package
     PineconeVectorStore.from_documents(
         chunks,
         embedding=embeddings,
