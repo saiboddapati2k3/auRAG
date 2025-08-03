@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request, Header
+from fastapi import FastAPI, Header, Depends
+from fastapi.security.api_key import APIKeyHeader
 from processor import load_and_index_document
 from model import query_document
 from pydantic import BaseModel
@@ -14,8 +15,13 @@ class QueryRequest(BaseModel):
     documents: str
     questions: List[str]
 
+api_key_header = APIKeyHeader(name="Authorization")
+
 @app.post("/hackrx/run")
-async def run_query(request: QueryRequest, authorization: str = Header(...)):
+async def run_query(
+    request: QueryRequest,
+    authorization: str = Depends(api_key_header)
+):
     if not authorization.startswith("Bearer "):
         return {"status": "error", "message": "Invalid token format"}
 
