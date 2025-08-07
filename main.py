@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Header, Depends, HTTPException, BackgroundTasks
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
 from typing import List, Optional
+import os
 import time
 import asyncio
 from contextlib import asynccontextmanager
@@ -14,10 +15,8 @@ from model import query_document
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    print("🚀 RAG System starting up...")
     yield
     # Shutdown
-    print("👋 RAG System shutting down...")
 
 app = FastAPI(
     title="Advanced RAG System",
@@ -92,30 +91,29 @@ async def run_query(
     start_time = time.time()
     
     try:
-        print(f"🚀 Processing request with {len(request.questions)} questions")
-        
         # Load and index document
-        print("📚 Loading and indexing document...")
-        chunks = await asyncio.to_thread(load_and_index_document, request.documents)
-        print(f"✅ Indexed {len(chunks)} document chunks")
+        # chunks = await asyncio.to_thread(load_and_index_document, request.documents)
         
-        # Process questions
-        print("💬 Processing questions...")
+        # Process questions SEQUENTIALLY - one at a time
         results = []
         
         for i, question in enumerate(request.questions, 1):
-            print(f"Question {i}/{len(request.questions)}: {question[:50]}...")
+            print(f"\nQuestion {i}: {question}")
+            
             try:
+                # Process ONE question at a time and wait for complete response
                 answer = await asyncio.to_thread(query_document, question)
+                
+                print(f"Answer {i}: {answer}")
+                
                 results.append(answer)
+                
             except Exception as qe:
-                error_msg = f"Error processing question '{question[:50]}...': {str(qe)}"
-                print(error_msg)
+                error_msg = f"Error processing question '{question}': {str(qe)}"
+                print(f"Error: {error_msg}")
                 results.append(error_msg)
         
         processing_time = time.time() - start_time
-        
-        print(f"✅ Completed processing in {processing_time:.2f}s")
         
         return QueryResponse(
             status="success",
@@ -126,7 +124,6 @@ async def run_query(
     except Exception as e:
         processing_time = time.time() - start_time
         error_msg = f"Internal error: {str(e)}"
-        print(f"❌ {error_msg}")
         
         return QueryResponse(
             status="error",
