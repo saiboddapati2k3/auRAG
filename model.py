@@ -9,21 +9,35 @@ load_dotenv()
 
 # Enhanced QA prompt
 QA_PROMPT_TEMPLATE = """
-You are an expert assistant that provides accurate, comprehensive answers based on the provided context.
+# ROLE
+You are a meticulous and impartial Analyst. Your primary function is to provide precise, factual answers by synthesizing information exclusively from the provided text. You are not a conversational chatbot; you are a fact-based analytical engine.
 
-Context Information:
+# CORE DIRECTIVE
+Your response MUST be based 100% on the `Provided Context`. You are strictly forbidden from using any prior knowledge or external information. Every part of your answer must be directly supported by the text provided.
+
+---
+# Provided Context:
 {context}
+---
+# User's Question:
+{question}
+---
 
-Question: {question}
+# INSTRUCTIONS FOR YOUR RESPONSE:
 
-Instructions:
-1. Answer the question using ONLY the information provided in the context
-2. If the context doesn't contain enough information, clearly state what's missing
-3. Provide specific details and examples when available
-4. Structure your response clearly with relevant sections
-5. If multiple perspectives exist in the context, present them fairly
+1.  **Reason First, Then Answer:** Before writing, perform a step-by-step analysis to connect the specific rules and statements in the `Provided Context` to the `User's Question`.
 
-Answer:
+2.  **Cite Your Sources:** This is your most important task. For every piece of information you provide in your answer, you MUST reference the specific source clause or document part it came from. Assume the context chunks have metadata IDs (e.g., [SEC-3.1.b], [policy_doc_p4]). Use this format: `The waiting period for specific surgeries is 24 months [SEC-3.4.b].`
+
+3.  **Answer Directly and Concisely:** Begin your response with a direct summary answering the user's question.
+
+4.  **Elaborate with Details:** After the summary, provide a more detailed breakdown. Use bullet points or numbered lists to present specific conditions, amounts, timelines, and exclusions mentioned in the context. Always include citations.
+
+5.  **Handle Insufficient Information:** If the context does not contain the information to answer the question, state that directly. Do not speculate or apologize. Clearly specify what information is missing. Example: `The provided context does not specify the procedure for out-of-network claims.`
+
+6.  **Maintain a Formal Tone:** Structure your response clearly and professionally. Avoid conversational filler, opinions, or any language that is not directly supported by the context.
+
+# Answer:
 """
 
 class OptimizedQAModel:
@@ -31,7 +45,7 @@ class OptimizedQAModel:
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=0.1,  # Slightly higher for more natural responses
-            max_tokens=2048
+            # max_tokens=2048
         )
         self.embedding = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         self.index_name = os.getenv("PINECONE_INDEX_NAME", "aurag")
@@ -52,8 +66,6 @@ class OptimizedQAModel:
     def query_document(self, query: str) -> str:
         """Enhanced document querying with rank fusion"""
         try:
-            print(f"🤖 Processing query: {query}")
-            
             # Get retriever with rank fusion
             retriever = get_rank_fusion_retriever(
                 self.index_name, 
@@ -62,24 +74,41 @@ class OptimizedQAModel:
                 self.llm
             )
             
-            # Retrieve relevant documents
-            docs = retriever.get_relevant_documents(query)
+            # Retrieve relevant documents using invoke
+            docs = retriever.invoke(query)
             
             if not docs:
                 return "I couldn't find relevant information in the document to answer your question."
             
-            print(f"📚 Found {len(docs)} relevant documents")
+            # Prepare context - limit size to avoid token limits
+            context_parts = []
+            total_chars = 0
+            max_context_chars = 8000  # Limit context size
             
-            # Generate answer using the QA chain
-            result = self.qa_chain.invoke({
-                "input_documents": docs,
-                "question": query
-            })
+            for i, doc in enumerate(docs):
+                doc_content = doc.page_content.strip()
+                if total_chars + len(doc_content) > max_context_chars:
+                    break
+                context_parts.append(f"Document {i+1}:\n{doc_content}")
+                total_chars += len(doc_content)
             
-            return result.get('output_text', 'Sorry, I could not generate an answer.')
+            # Generate answer using the QA chain with timeout handling
+            try:
+                result = self.qa_chain.invoke({
+                    "input_documents": docs[:len(context_parts)],  # Only use docs that fit in context
+                    "question": query
+                })
+                
+                answer = result.get('output_text', 'Sorry, I could not generate an answer.')
+                
+                return answer
+                
+            except Exception as llm_error:
+                # Fallback: provide a simple context-based response
+                fallback = f"LLM failed, but based on retrieved documents: {context_parts[0][:200] if context_parts else 'No context available'}"
+                return fallback
             
         except Exception as e:
-            print(f"Error in query processing: {e}")
             return f"An error occurred while processing your question: {str(e)}"
 
 # Global instance

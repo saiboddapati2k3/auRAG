@@ -1,10 +1,12 @@
 import numpy as np
-from typing import List
+from typing import List, Dict, Tuple
 from collections import defaultdict
+from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain_pinecone import Pinecone as PineconeVectorStore
 from langchain_core.documents import Document
 from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.runnables import RunnableParallel
 
 class Queries(BaseModel):
     """A list of search queries."""
@@ -12,20 +14,33 @@ class Queries(BaseModel):
 
 # Enhanced query generation prompt
 QUERY_GENERATION_PROMPT = """
-Role: You are an expert at query expansion and reformulation. Generate diverse, high-quality search queries.
+# ROLE
+You are an expert search query strategist, specializing in formulating queries for dense, unstructured legal and corporate documents like policy wordings, contracts, and internal emails.
 
-Instructions:
-1. Analyze the user's question for key concepts, entities, and intent
-2. Generate 3-5 diverse queries that:
-   - Use different terminology and synonyms
-   - Approach the topic from multiple angles
-   - Include both specific and general formulations
-   - Cover potential sub-questions
-3. Ensure queries are specific enough to retrieve relevant content
+# DOCUMENT CONTEXT
+The search will be performed on a corpus of formal documents that contain:
+- Legal and technical jargon (e.g., "indemnification," "force majeure," "subrogation").
+- Specific clause or section numbering (e.g., "Clause 4.1.b," "Section III, Part A").
+- Precise definitions, exclusions, conditions, and obligations.
+- Formal language from official communications.
+Your generated queries must reflect this formal, specific, and structured nature.
 
-Original Question: {question}
+# OBJECTIVE
+Analyze the user's question and generate a structured set of 3-4 distinct search queries. Each query must be strategically designed to retrieve the most relevant clauses, rules, or statements from the specified document types for use in a hybrid search system.
 
-Generate diverse search queries that would help find comprehensive information about this question.
+# INSTRUCTIONS
+1.  **Keyword / Jargon Query:** Formulate a query using the precise legal, technical, or contractual jargon likely to be found verbatim in the document. Focus on "terms of art" or specific phrases (e.g., "limitation of liability," "confidentiality clause," "initial waiting period"). This is for a keyword search engine (like BM25).
+
+2.  **Semantic / Intent Query:** Formulate a query that captures the user's underlying intent in a more descriptive way, but maintains a professional tone suitable for a corporate or legal context. This is for a vector search engine and helps find conceptually related clauses that may not use the exact keywords.
+
+3.  **Sub-Question / "Fine Print" Query:** Formulate a query that targets a critical sub-aspect, such as a **waiting period, an exclusion clause, a notice period, a renewal condition, or a specific definition.** This is crucial for finding the controlling "fine print" that a broader query might miss.
+
+4.  **Hypothetical Clause Query:** Formulate a query as a complete, declarative statement that sounds as if it were **pulled directly from the contract or policy.** This powerful technique helps the vector search find the exact clause that confirms or denies the rule.
+
+5.  **Output Format:** You MUST return the queries as a single, well-formed JSON object with the keys: `keyword_query`, `semantic_query`, `fine_print_query`, and `hypothetical_clause_query`. Do not add any other text or explanation.
+
+# USER QUESTION
+{question}
 """
 
 class AdvancedRankFusion:
@@ -47,7 +62,7 @@ class AdvancedRankFusion:
                 namespace="default"
             )
         except Exception as e:
-            print(f"Warning: Could not connect to vector store: {e}")
+            pass
             
     def _generate_diverse_queries(self, original_query: str) -> List[str]:
         """Generate diverse queries using LLM"""
@@ -68,11 +83,9 @@ class AdvancedRankFusion:
                     seen.add(q.lower())
                     unique_queries.append(q)
                     
-            print(f"Generated {len(unique_queries)} diverse queries")
             return unique_queries
             
         except Exception as e:
-            print(f"Query generation failed: {e}")
             return [original_query]
     
     def _get_all_document_texts(self) -> List[str]:
@@ -94,11 +107,9 @@ class AdvancedRankFusion:
                 if 'text' in match.metadata:
                     texts.append(match.metadata['text'])
                     
-            print(f"Retrieved {len(texts)} documents for BM25 corpus")
             return texts
             
         except Exception as e:
-            print(f"Failed to retrieve documents for BM25: {e}")
             return []
     
     def _reciprocal_rank_fusion(self, ranked_lists: List[List[Document]], k: int = 60) -> List[Document]:
@@ -149,7 +160,6 @@ class AdvancedRankFusion:
             return [doc for doc, sim in doc_sim_pairs[:top_k]]
             
         except Exception as e:
-            print(f"Semantic reranking failed: {e}")
             return documents[:top_k]
     
     def retrieve(self, query: str, top_k: int = 8) -> List[Document]:
@@ -157,8 +167,6 @@ class AdvancedRankFusion:
         
         if not self.vector_store:
             raise ValueError("Vector store not initialized")
-        
-        print(f"🔍 Starting advanced retrieval for: {query}")
         
         # Step 1: Generate diverse queries
         diverse_queries = self._generate_diverse_queries(query)
@@ -172,11 +180,11 @@ class AdvancedRankFusion:
         all_vector_results = []
         for q in diverse_queries:
             try:
-                results = vector_retriever.get_relevant_documents(q)
+                results = vector_retriever.invoke(q)
                 if results:
                     all_vector_results.append(results[:top_k])
             except Exception as e:
-                print(f"Vector retrieval failed for query '{q}': {e}")
+                pass
         
         # Step 4: BM25 retrieval (if corpus available)
         bm25_results = []
@@ -187,20 +195,17 @@ class AdvancedRankFusion:
                 bm25_retriever.k = top_k
                 
                 for q in diverse_queries:
-                    results = bm25_retriever.get_relevant_documents(q)
+                    results = bm25_retriever.invoke(q)
                     if results:
                         bm25_results.append(results[:top_k])
         except Exception as e:
-            print(f"BM25 retrieval failed: {e}")
+            pass
         
         # Step 5: Combine all ranked lists
         all_ranked_lists = all_vector_results + bm25_results
         
         if not all_ranked_lists:
-            print("No results from any retrieval method")
             return []
-        
-        print(f"Combining {len(all_ranked_lists)} ranked lists")
         
         # Step 6: Apply Reciprocal Rank Fusion
         fused_results = self._reciprocal_rank_fusion(all_ranked_lists)
@@ -208,7 +213,6 @@ class AdvancedRankFusion:
         # Step 7: Semantic reranking
         final_results = self._semantic_reranking(fused_results, query, top_k)
         
-        print(f"✅ Retrieved {len(final_results)} documents after rank fusion")
         return final_results
 
 def get_rank_fusion_retriever(index_name: str, embedding, query: str, llm):
@@ -219,7 +223,7 @@ def get_rank_fusion_retriever(index_name: str, embedding, query: str, llm):
         def __init__(self, fusion_instance):
             self.fusion = fusion_instance
             
-        def get_relevant_documents(self, query: str) -> List[Document]:
+        def invoke(self, query: str) -> List[Document]:
             return self.fusion.retrieve(query)
     
     return RankFusionRetriever(fusion)

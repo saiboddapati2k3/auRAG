@@ -1,4 +1,3 @@
-# processor.py - Optimized Document Processing
 import os
 import requests
 import hashlib
@@ -24,7 +23,6 @@ class OptimizedDocumentProcessor:
     def _ensure_index_exists(self):
         """Create Pinecone index if it doesn't exist"""
         if self.index_name not in self.pc.list_indexes().names():
-            print(f"Creating index '{self.index_name}'...")
             self.pc.create_index(
                 name=self.index_name,
                 dimension=768,
@@ -94,31 +92,24 @@ class OptimizedDocumentProcessor:
                 seen_hashes.add(content_hash)
                 unique_chunks.append(chunk)
         
-        print(f"Removed {len(chunks) - len(unique_chunks)} duplicate chunks")
         return unique_chunks
     
     def load_and_index_document(self, doc_url: str) -> List[Document]:
         """Optimized document loading and indexing"""
-        print("📥 Downloading document...")
         pdf_path = self._download_pdf(doc_url)
         
         try:
-            print("📄 Loading PDF...")
             loader = PyPDFLoader(pdf_path)
             docs = loader.load()
             
             if not docs:
                 raise ValueError("No content extracted from PDF")
             
-            print("🪓 Smart chunking...")
             chunks = self._smart_chunk_documents(docs)
             
             if not chunks:
                 raise ValueError("No text chunks created from document")
             
-            print(f"✅ Created {len(chunks)} optimized chunks")
-            
-            print("🔗 Indexing to Pinecone...")
             # Batch upload with error handling
             try:
                 PineconeVectorStore.from_documents(
@@ -128,10 +119,8 @@ class OptimizedDocumentProcessor:
                     namespace="default",
                     batch_size=16  # Smaller batches for stability
                 )
-                print("📦 Indexing complete")
                 return chunks
             except Exception as e:
-                print(f"Error during indexing: {e}")
                 raise
                 
         finally:
@@ -143,7 +132,6 @@ class OptimizedDocumentProcessor:
         """Clear the index"""
         index = self.pc.Index(self.index_name)
         index.delete(delete_all=True, namespace="default")
-        print("🗑️ Index cleared")
 
 # Global instance
 processor = OptimizedDocumentProcessor()
