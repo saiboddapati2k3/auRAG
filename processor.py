@@ -1,66 +1,54 @@
-import os
-import requests
+from fastapi import FastAPI, Depends
+from fastapi.security.api_key import APIKeyHeader
+from pydantic import BaseModel
+from typing import List
 from dotenv import load_dotenv
-from pinecone import Pinecone, PodSpec  # ← Updated import
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-# from langchain_openai import OpenAIEmbeddings
-from langchain_google_genai import GoogleGenerativeAIEmbeddings , ChatGoogleGenerativeAI
+import os
 
-
-from langchain_pinecone import Pinecone as PineconeVectorStore # ← Updated import
+from processor import load_and_index_document
+from model import query_document
 
 load_dotenv()
 
-# ───────────────────────── Pinecone init (Updated) ─────────────────────────
-# The new client automatically uses PINECONE_API_KEY from .env
-pc = Pinecone()
+app = FastAPI()
 
-# Get index name and environment from .env, with fallbacks
-index_name = os.getenv("PINECONE_INDEX_NAME") or "aurag"
-pinecone_env = os.getenv("PINECONE_ENV") or "us-east-1"
+# Setup header-based auth
+api_key_header = APIKeyHeader(name="Authorization")
 
-# Create index if it doesn't exist (1536 dims for OpenAI)
-if index_name not in pc.list_indexes().names():
-    print(f"Creating index '{index_name}'...")
-    pc.create_index(
-        name=index_name,
-        dimension=768,  # Dimension for OpenAI's text-embedding-ada-002
-        metric="cosine",
-        spec=PodSpec(environment=pinecone_env)
-    )
+# Request schema
+class QueryRequest(BaseModel):
+    documents: str
+    questions: List[str]
 
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+@app.post("/hackrx/run")
+async def run_query(
+    request: QueryRequest,
+    authorization: str = Depends(api_key_header)
+):
+    # Optional auth check
+    if not authorization.startswith("Bearer "):
+        return {"status": "error", "message": "Invalid token format"}
 
-# ───────────────────────── Helpers ─────────────────────────
-def download_pdf(url: str, path: str = "temp_doc.pdf"):
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    with open(path, "wb") as f:
-        f.write(r.content)
+    try:
+        print("🚀 Loading document and indexing...")
+        load_and_index_document(request.documents)
 
-def load_and_index_document(doc_url: str):
-    print("📥 Downloading...")
-    download_pdf(doc_url)
+        print("💬 Answering questions...")
+        results = []
+        for q in request.questions:
+            try:
+                answer = query_document(q)
+                results.append(answer)
+            except Exception as qe:
+                results.append(f"Error answering: {q} — {qe}")
 
-    print("📄 Loading PDF...")
-    loader = PyPDFLoader("temp_doc.pdf")
-    docs = loader.load()
+        return {
+            "status": "success",
+            "answers": results
+        }
 
-    print("🪓 Splitting...")
-    splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
-    chunks = splitter.split_documents(docs)
-    if not chunks:
-        raise ValueError("No text chunks extracted from PDF.")
-
-    print(f"✅ {len(chunks)} chunks")
-    print("🔗 Uploading to Pinecone...")
-    # This LangChain function works with the new SDK via the langchain-pinecone package
-    PineconeVectorStore.from_documents(
-        chunks,
-        embedding=embeddings,
-        index_name=index_name,
-        namespace="default"
-    )
-    print("📦 Indexing complete.")
-    return chunks
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Internal error: {str(e)}"
+        }
